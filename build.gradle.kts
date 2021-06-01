@@ -11,7 +11,7 @@ version = "1.0"
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
     id("org.jetbrains.kotlin.jvm") version "1.5.0"
-    id("org.beryx.runtime") version "1.11.4"
+    id("org.beryx.runtime") version "1.12.5"
 
     // Apply the application plugin to add support for building a CLI application in Java.
     application
@@ -52,20 +52,22 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit")
 }
 
+val executableName = "cloudflare"
+
 application {
     // Define the main class for the application.
-    mainClass.set("kr.sixtyfive.CliKt")
+    mainClass.set("$group.CliKt")
+    applicationName = executableName
     applicationDefaultJvmArgs = listOf("-Dfile.encoding=UTF-8", "-Dname=${rootProject.name}")
 }
 
 runtime {
     options.set(listOf("--strip-debug", "--compress", "2", "--no-header-files", "--no-man-pages"))
     jpackage {
-        //icon = "build/resources/main/icon.ico"
+        imageName = executableName
         imageOptions = listOf(
             "--win-console",
-            //"--resource-dir", "build/resources/main",
-            //"--icon", "src/main/resources/icon.ico"
+            "--icon", "src/main/resources/cloudflare.ico",
         )
     }
 }
