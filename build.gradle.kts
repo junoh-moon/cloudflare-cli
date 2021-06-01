@@ -5,10 +5,13 @@
  * For more details take a look at the 'Building Java & JVM projects' chapter in the Gradle
  * User Manual available at https://docs.gradle.org/6.7.1/userguide/building_java_projects.html
  */
+group = "kr.sixtyfive"
+version = "1.0"
 
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
     id("org.jetbrains.kotlin.jvm") version "1.5.0"
+    id("org.beryx.runtime") version "1.11.4"
 
     // Apply the application plugin to add support for building a CLI application in Java.
     application
@@ -20,7 +23,6 @@ repositories {
 }
 
 dependencies {
-    //implementation("com.github.snowphone:SimpleHttp:0.3")
     implementation("com.github.snowphone:cjk-table:0.3")
     implementation("com.google.code.gson:gson:2.8.7")
 
@@ -28,6 +30,8 @@ dependencies {
     implementation("org.http4k:http4k-core")
     implementation("org.http4k:http4k-server-netty")
     implementation("org.http4k:http4k-client-apache")
+
+    implementation("com.github.ajalt.clikt:clikt:3.0.1")
 
     // Align versions of all Kotlin components
     implementation(platform("org.jetbrains.kotlin:kotlin-bom"))
@@ -47,5 +51,18 @@ dependencies {
 
 application {
     // Define the main class for the application.
-    mainClass.set("kr.sixtyfive.CloudflareKt")
+    mainClass.set("kr.sixtyfive.CliKt")
+    applicationDefaultJvmArgs = listOf("-Dfile.encoding=UTF-8", "-Dname=${rootProject.name}")
+}
+
+runtime {
+    options.set(listOf("--strip-debug", "--compress", "2", "--no-header-files", "--no-man-pages"))
+    jpackage {
+        //icon = "build/resources/main/icon.ico"
+        imageOptions = listOf(
+            "--win-console",
+            //"--resource-dir", "build/resources/main",
+            //"--icon", "src/main/resources/icon.ico"
+        )
+    }
 }
