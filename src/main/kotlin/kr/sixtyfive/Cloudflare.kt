@@ -5,10 +5,6 @@ import org.http4k.client.ApacheClient
 import org.http4k.core.Method
 import org.http4k.core.Request
 
-fun getIp(): String {
-	return ApacheClient()(Request(Method.GET, "http://ipinfo.io/ip")).bodyString()
-}
-
 
 class Cloudflare(email: String, key: String) {
 	private val client = ApacheClient()
@@ -23,6 +19,12 @@ class Cloudflare(email: String, key: String) {
 		"X-Auth-Key" to key,
 		"Content-Type" to "application/json",
 	)
+
+	companion object {
+		fun getIp(): String {
+			return ApacheClient()(Request(Method.GET, "http://ipinfo.io/ip")).bodyString()
+		}
+	}
 
 	fun listZones(): Boolean {
 		val url = "$endpoint/zones"
@@ -40,10 +42,14 @@ class Cloudflare(email: String, key: String) {
 	}
 
 	fun listDnsRecordsByName(zoneName: String, pretty: Boolean = false): Boolean {
+		return getZoneId(zoneName)
+			?.let { listDnsRecords(it, pretty) } ?: false
+	}
+
+	private fun getZoneId(zoneName: String): String? {
 		val url = "$endpoint/zones"
 		return get(url)
 			.let { searchId(it, zoneName) }
-			?.let { listDnsRecords(it, pretty) } ?: false
 	}
 
 	fun listDnsRecords(zoneId: String, pretty: Boolean = false): Boolean {
@@ -60,6 +66,35 @@ class Cloudflare(email: String, key: String) {
 			?.let(::println)
 			?.let { true } ?: false
 
+	}
+
+	fun updateRecord(zoneName: String, params: UpdateParams): Boolean {
+		val zoneId = getZoneId(zoneName)
+		val dnsId = zoneId?.let { "${endpoint}/zones/${it}/dns_records" }
+			?.let(this::get)
+			?.let { getDnsId(it, params.name) }
+
+		val content = json.toJson(params)
+		return zoneId?.let {
+			if (dnsId.isNullOrEmpty()) {
+				"$endpoint/zones/$zoneId/dns_records"
+					.let { Request(Method.POST, it) }
+			} else {
+				"$endpoint/zones/$zoneId/dns_records/$dnsId"
+					.let { Request(Method.PUT, it) }
+			}.headers(header.toList())
+				.body(content)
+		}
+			?.let(client)
+			?.bodyString()
+			?.let { json.fromJson(it, Map::class.java) }
+			?.let { json.toJson(it) }
+			?.let(::println)
+			?.let { true } ?: false
+	}
+
+	private fun getDnsId(resp: String, dnsName: String): String? {
+		return searchId(resp, dnsName)
 	}
 
 	private fun get(url: String): String {

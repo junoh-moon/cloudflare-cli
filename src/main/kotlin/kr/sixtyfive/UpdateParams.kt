@@ -1,6 +1,6 @@
 package kr.sixtyfive
 
-data class Data(
+data class UpdateParams(
 	val type: String,
 	val name: String,
 	val content: String,
