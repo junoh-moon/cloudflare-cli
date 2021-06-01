@@ -1,12 +1,15 @@
 package kr.sixtyfive
 
 import com.google.gson.GsonBuilder
+import mu.KotlinLogging
 import org.http4k.client.ApacheClient
 import org.http4k.core.Method
 import org.http4k.core.Request
 
 
 class Cloudflare(email: String, key: String) {
+	private val logger = KotlinLogging.logger { }
+
 	private val client = ApacheClient()
 	private val json = GsonBuilder()
 		.setPrettyPrinting()
@@ -87,10 +90,14 @@ class Cloudflare(email: String, key: String) {
 		}
 			?.let(client)
 			?.bodyString()
+			?.apply { logger.info { this } }
 			?.let { json.fromJson(it, Map::class.java) }
 			?.let { json.toJson(it) }
 			?.let(::println)
-			?.let { true } ?: false
+			?.let { true } ?: let {
+			logger.warn { "Update failed" }
+			false
+		}
 	}
 
 	private fun getDnsId(resp: String, dnsName: String): String? {

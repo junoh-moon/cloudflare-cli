@@ -33,6 +33,9 @@ dependencies {
 
     implementation("com.github.ajalt.clikt:clikt:3.0.1")
 
+    implementation("io.github.microutils:kotlin-logging:2.0.4")
+    implementation("ch.qos.logback:logback-classic:1.2.3")
+
     // Align versions of all Kotlin components
     implementation(platform("org.jetbrains.kotlin:kotlin-bom"))
 
