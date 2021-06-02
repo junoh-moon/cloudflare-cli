@@ -116,7 +116,7 @@ class Cloudflare(email: String, key: String) {
 			.let { json.fromJson(it, Map::class.java) }
 			.let { it["result"] as? List<*> }
 			?.map { it as Map<*, *> }
-			?.first { it["name"] == key }
+			?.firstOrNull { it["name"] == key }
 			?.let { it["id"] as String }
 	}
 }
