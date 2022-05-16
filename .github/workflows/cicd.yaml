@@ -1,0 +1,76 @@
+name: CICD
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: hub.sixtyfive.me
+  NAME: cloudflare
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Login to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - 
+        name: short-sha
+        uses: benjlevesque/short-sha@v1.2
+        id: short-sha
+      -
+        name: Build and push
+        uses: docker/build-push-action@v2
+        with:
+          #context: .
+          #file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [ publish ]
+    steps: 
+      - 
+        name: pulling latest docker image on remote server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            whoami
+            sudo docker pull ${{ env.REGISTRY }}/${{ env.NAME }}:latest
+  notification:
+    runs-on: ubuntu-latest
+    needs: [ deploy ]
+    steps:
+      - 
+        name: short-sha
+        uses: benjlevesque/short-sha@v1.2
+        id: short-sha
+      -
+        name: notifying
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: | 
+            curl --data "[$(date +\%F)] Deploying ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }} completed\!" https://ntfy.sixtyfive.me/workflow
+
+
