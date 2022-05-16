@@ -6,7 +6,7 @@ WORKDIR /root/
 COPY . /root/
 RUN ./gradlew shadowJar
 
-FROM openjdk:11-alpine
+FROM openjdk:17-alpine
 COPY --from=builder /root/build/libs/cloudflare-sdk-1.0-all.jar ./
 
 ENTRYPOINT ["java", "-jar", "cloudflare-sdk-1.0-all.jar"]
