@@ -71,6 +71,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: | 
-            curl --data "[$(date +\%F)] Deploying ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }} completed\!" https://ntfy.sixtyfive.me/workflow
+            curl --data "[$(date +\%F)] Deploying ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }} completed!" https://ntfy.sixtyfive.me/workflow
 
 
