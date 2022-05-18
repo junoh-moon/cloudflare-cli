@@ -1,6 +1,7 @@
 FROM gradle:jdk11 AS builder
 
 ENV HOME=/root
+ENV TZ=Asia/Seoul
 
 WORKDIR /root/
 COPY . /root/
