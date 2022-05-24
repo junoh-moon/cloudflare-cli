@@ -7,10 +7,10 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 
 class Cli : CliktCommand(name = "cloudflare") {
-	private val email by option("--email", metavar = "<email address>").required()
-	private val key by option("--key", metavar = "<secret key>").required()
-	private val zoneName by option("--zone", metavar = "<zone name>")
-	private val dnsName by option("--dns", metavar = "<dns record name>")
+	private val email by option("--email", metavar = "EMAIL").required()
+	private val key by option("--key", metavar = "TOKEN").required()
+	private val zoneName by option("--zone", metavar = "ZONE")
+	private val dns by option("--dns", metavar = "DNS(,DNS)*", envvar = "CLOUDFLARE_DNS")
 
 	private val listZones by option("--list_zones").flag(default = false)
 	private val listDnsRecords by option("--list_dns").flag(default = false)
@@ -25,11 +25,14 @@ class Cli : CliktCommand(name = "cloudflare") {
 				cloudflare.listDnsRecordsByName(zoneName)
 			}
 			update -> {
-				val dnsName = dnsName ?: throw CliktError("--dns option is required")
+				val dnsList = dns?.split(",") ?: throw CliktError("--dns option is required")
 				val zoneName = zoneName ?: throw CliktError("--zone option is required")
-				Cloudflare.getIp()
-					.let { UpdateParams("A", dnsName, it, 120, false) }
-					.let { cloudflare.updateRecord(zoneName, it) }
+				val ip = Cloudflare.getIp()
+				dnsList.map {
+					val dnsName = "$it.$zoneName"
+					val record = Param("A", dnsName, ip, 120, false)
+					cloudflare.updateRecord(zoneName, record)
+				}
 			}
 		}
 	}

@@ -71,7 +71,7 @@ class Cloudflare(email: String, key: String) {
 
 	}
 
-	fun updateRecord(zoneName: String, params: UpdateParams): Boolean {
+	fun updateRecord(zoneName: String, params: Param): Boolean {
 		val zoneId = getZoneId(zoneName)
 		val dnsId = zoneId?.let { "${endpoint}/zones/${it}/dns_records" }
 			?.let(this::get)
