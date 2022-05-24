@@ -10,7 +10,7 @@ class Cli : CliktCommand(name = "cloudflare") {
 	private val email by option("--email", metavar = "EMAIL").required()
 	private val key by option("--key", metavar = "TOKEN").required()
 	private val zoneName by option("--zone", metavar = "ZONE")
-	private val dns by option("--dns", metavar = "DNS(,DNS)*", envvar = "CLOUDFLARE_DNS")
+	private val dns by option("--dns", metavar = "DNS(,DNS)*")
 
 	private val listZones by option("--list_zones").flag(default = false)
 	private val listDnsRecords by option("--list_dns").flag(default = false)
@@ -29,7 +29,7 @@ class Cli : CliktCommand(name = "cloudflare") {
 				val zoneName = zoneName ?: throw CliktError("--zone option is required")
 				val ip = Cloudflare.getIp()
 				dnsList.map {
-					val dnsName = "$it.$zoneName"
+					val dnsName = if (it.isNotBlank()) "$it.$zoneName" else zoneName
 					val record = Param("A", dnsName, ip, 120, false)
 					cloudflare.updateRecord(zoneName, record)
 				}
