@@ -17,7 +17,27 @@ Options:
 ```
 
 **Update (or insert) DNS**
-```
+```bash
 cloudflare --email <email> --key <key> --update --zone=example.domain --dns='music,videos,photos'
 ```
 The example above updates `music.example.domain`, `videos.example.domain`, and `photos.example.domain`.
+
+**List Zones**
+```bash
+cloudflare --email <email> --key <key> --list_zones
+
+# Output: 
+#--------------
+#example.domain
+---------------
+```
+
+**List DNS**
+```
+cloudflare --email <email> --key <key> --list_dns --zone example.domain
+
+# Output:
+#  music.example.domain
+# videos.example.domain
+# photos.example.domain
+```
