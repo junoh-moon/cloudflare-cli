@@ -29,7 +29,7 @@ cloudflare --email <email> --key <key> --list_zones
 # Output: 
 #--------------
 #example.domain
-#---------------
+#--------------
 ```
 
 **List DNS**
