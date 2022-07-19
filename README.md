@@ -33,7 +33,7 @@ cloudflare --email <email> --key <key> --list_zones
 ```
 
 **List DNS**
-```
+```bash
 cloudflare --email <email> --key <key> --list_dns --zone example.domain
 
 # Output:
