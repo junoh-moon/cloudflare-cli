@@ -39,33 +39,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [ publish ]
-    steps: 
-      - 
-        name: short-sha
-        uses: benjlevesque/short-sha@v1.2
-        id: short-sha
-      - 
-        name: k8s deploy
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            whoami
-
-            path=/home/sixtyfive/external/micro_services/cronjob/cloudflare-cronjob.yaml
-
-            /home/sixtyfive/.local/bin/yq -i '.spec.jobTemplate.spec.template.spec.containers[0].image="${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}"' "$path"
-            /usr/bin/cat "$path"
-            /snap/bin/kubectl apply -f "$path"
   notification:
     runs-on: ubuntu-latest
-    needs: [ deploy ]
+    needs: [ publish ]
     steps:
       - 
         name: short-sha
