@@ -30,7 +30,7 @@ class Cli : CliktCommand(name = "cloudflare") {
 				val ip = Cloudflare.getIp()
 				dnsList.map {
 					val dnsName = if (it.isNotBlank()) "$it.$zoneName" else zoneName
-					val record = Param("A", dnsName, ip, 120, forWeb(dnsName))
+					val record = Param("A", dnsName, ip, 120, false)
 					cloudflare.updateRecord(zoneName, record)
 				}
 			}
