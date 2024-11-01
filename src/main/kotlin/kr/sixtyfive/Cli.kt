@@ -30,15 +30,15 @@ class Cli : CliktCommand(name = "cloudflare") {
 				val ip = Cloudflare.getIp()
 				dnsList.map {
 					val dnsName = if (it.isNotBlank()) "$it.$zoneName" else zoneName
-					val record = Param("A", dnsName, ip, 120, !usedForSsh(dnsName))
+					val record = Param("A", dnsName, ip, 120, forWeb(dnsName))
 					cloudflare.updateRecord(zoneName, record)
 				}
 			}
 		}
 	}
 
-	private fun usedForSsh(dnsName: String): Boolean {
-		return dnsName == zoneName
+	private fun forWeb(dnsName: String): Boolean {
+		return dnsName !in listOf(zoneName, "hub.${this.zoneName}")
 	}
 }
 
