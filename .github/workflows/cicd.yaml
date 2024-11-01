@@ -56,10 +56,12 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
+            echo $PATH
             whoami
 
             path=/home/sixtyfive/external/micro_services/cronjob/cloudflare-cronjob.yaml
 
+            export KUBECONFIG=/home/sixtyfive/.kube/config
             /home/sixtyfive/.local/bin/yq -i '.spec.jobTemplate.spec.template.spec.containers[0].image="${{ env.REGISTRY }}/${{ env.NAME }}:${{ steps.short-sha.outputs.sha }}"' "$path"
             /usr/bin/cat "$path"
             /usr/local/bin/kubectl apply -f "$path"
