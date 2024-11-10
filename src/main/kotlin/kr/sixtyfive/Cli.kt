@@ -11,6 +11,7 @@ class Cli : CliktCommand(name = "cloudflare") {
 	private val key by option("--key", metavar = "TOKEN").required()
 	private val zoneName by option("--zone", metavar = "ZONE")
 	private val dns by option("--dns", metavar = "DNS(,DNS)*")
+	private val useProxy by option("--proxy").flag(default = false)
 
 	private val listZones by option("--list_zones").flag(default = false)
 	private val listDnsRecords by option("--list_dns").flag(default = false)
@@ -30,7 +31,7 @@ class Cli : CliktCommand(name = "cloudflare") {
 				val ip = Cloudflare.getIp()
 				dnsList.map {
 					val dnsName = if (it.isNotBlank()) "$it.$zoneName" else zoneName
-					val record = Param("A", dnsName, ip, 120, false)
+					val record = Param("A", dnsName, ip, 120, useProxy)
 					cloudflare.updateRecord(zoneName, record)
 				}
 			}
