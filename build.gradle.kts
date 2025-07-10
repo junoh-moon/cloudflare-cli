@@ -10,9 +10,9 @@ version = "1.0"
 
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
-    id("org.jetbrains.kotlin.jvm") version "1.5.0"
-    id("org.beryx.runtime") version "1.12.5"
-	id("com.github.johnrengelman.shadow") version "7.1.2"
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
+    id("org.beryx.runtime") version "1.13.1"
+	id("com.github.johnrengelman.shadow") version "8.1.1"
 
 
     // Apply the application plugin to add support for building a CLI application in Java.
@@ -26,17 +26,17 @@ repositories {
 
 dependencies {
     implementation("com.github.snowphone:cjk-table:0.3")
-    implementation("com.google.code.gson:gson:2.8.7")
+    implementation("com.google.code.gson:gson:2.13.1")
 
-    implementation(platform("org.http4k:http4k-bom:4.9.5.0"))
+    implementation(platform("org.http4k:http4k-bom:6.15.1.0"))
     implementation("org.http4k:http4k-core")
     implementation("org.http4k:http4k-server-netty")
     implementation("org.http4k:http4k-client-apache")
 
-    implementation("com.github.ajalt.clikt:clikt:3.0.1")
+    implementation("com.github.ajalt.clikt:clikt:4.1.0")
 
-    implementation("io.github.microutils:kotlin-logging:2.0.4")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation("io.github.oshai:kotlin-logging-jvm:7.0.3")
+    implementation("ch.qos.logback:logback-classic:1.5.18")
 
     // Align versions of all Kotlin components
     implementation(platform("org.jetbrains.kotlin:kotlin-bom"))
@@ -45,7 +45,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
 
     // This dependency is used by the application.
-    implementation("com.google.guava:guava:29.0-jre")
+    implementation("com.google.guava:guava:33.4.8-jre")
 
     // Use the Kotlin test library.
     testImplementation("org.jetbrains.kotlin:kotlin-test")

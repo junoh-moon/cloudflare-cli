@@ -1,7 +1,7 @@
 package kr.sixtyfive
 
 import com.google.gson.GsonBuilder
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.http4k.client.ApacheClient
 import org.http4k.core.Method
 import org.http4k.core.Request
