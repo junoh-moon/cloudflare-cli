@@ -1,4 +1,4 @@
-FROM gradle:jdk11 AS builder
+FROM gradle:jdk21 AS builder
 
 ENV HOME=/root
 ENV TZ=Asia/Seoul
@@ -8,7 +8,7 @@ WORKDIR /app/
 COPY . /app/
 RUN ./gradlew shadowJar
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:21-jre-alpine
 COPY --from=builder /app/build/libs/cloudflare-sdk-1.0-all.jar ./
 
 ENTRYPOINT ["java", "-jar", "cloudflare-sdk-1.0-all.jar"]
