@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -35,7 +36,39 @@ func NewCloudflare(endpoint, email, key string, logger *Logger, out io.Writer) *
 	}
 }
 
-// getIP asks an external service for this machine's public IP address.
+type Zone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Record is a DNS record as the API reports it.
+type Record struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Content string `json:"content"`
+	TTL     int    `json:"ttl"`
+	Proxied bool   `json:"proxied"`
+}
+
+// matches tells whether the record already holds what params would write.
+func (r Record) matches(params Param) bool {
+	// Cloudflare reports ttl 1 ("automatic") for every proxied record,
+	// whatever TTL was sent.
+	sameTTL := r.TTL == params.TTL || params.Proxied
+	return r.Content == params.Content && r.Proxied == params.Proxied && sameTTL
+}
+
+// Outcome is what updateRecord did with one record.
+type Outcome int
+
+const (
+	Updated   Outcome = iota // written, and accepted by the API
+	Unchanged                // already up to date, nothing sent
+	Failed                   // written, but refused by the API
+)
+
+// getIP asks an external service for this machine's public IPv4 address.
 func getIP(url string) (string, error) {
 	client := &http.Client{Timeout: requestTimeout}
 	response, err := client.Get(url)
@@ -45,22 +78,31 @@ func getIP(url string) (string, error) {
 	defer response.Body.Close()
 
 	body, err := io.ReadAll(response.Body)
-	return string(body), err
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("IP lookup at %s answered %s", url, response.Status)
+	}
+
+	text := strings.TrimSpace(string(body))
+	address, err := netip.ParseAddr(text)
+	if err != nil {
+		return "", fmt.Errorf("IP lookup at %s answered %q, which is not an IP address", url, text)
+	}
+	isPublic := !address.IsPrivate() && !address.IsLoopback() && !address.IsUnspecified() &&
+		!address.IsLinkLocalUnicast() && !address.IsMulticast()
+	if !address.Is4() || !isPublic {
+		return "", fmt.Errorf("IP lookup at %s answered %s, which is not a public IPv4 address", url, address)
+	}
+	return address.String(), nil
 }
 
-// listZones prints the name of every zone. It reports false when the
-// response carries no result (for example on an authentication error).
-func (c *Cloudflare) listZones() (bool, error) {
-	body, err := c.get(c.endpoint + "/zones")
+// listZones prints the name of every zone.
+func (c *Cloudflare) listZones() error {
+	zones, err := getAll[Zone](c, c.endpoint+"/zones")
 	if err != nil {
-		return false, err
-	}
-	zones, err := parseResult(body)
-	if err != nil {
-		return false, err
-	}
-	if zones == nil {
-		return false, nil
+		return err
 	}
 
 	table := NewTable().addLine()
@@ -68,37 +110,35 @@ func (c *Cloudflare) listZones() (bool, error) {
 		table.addRow(zone.Name).addLine()
 	}
 	fmt.Fprintln(c.out, table.render())
-	return true, nil
+	return nil
 }
 
-func (c *Cloudflare) listDNSRecordsByName(zoneName string, pretty bool) (bool, error) {
+func (c *Cloudflare) listDNSRecordsByName(zoneName string, pretty bool) error {
 	zoneID, err := c.getZoneID(zoneName)
-	if err != nil || zoneID == "" {
-		return false, err
+	if err != nil {
+		return err
 	}
 	return c.listDNSRecords(zoneID, pretty)
 }
 
-// getZoneID returns "" when no zone has the given name.
 func (c *Cloudflare) getZoneID(zoneName string) (string, error) {
-	body, err := c.get(c.endpoint + "/zones")
+	zones, err := getAll[Zone](c, c.endpoint+"/zones")
 	if err != nil {
 		return "", err
 	}
-	return searchID(body, zoneName)
+	for _, zone := range zones {
+		if zone.Name == zoneName {
+			return zone.ID, nil
+		}
+	}
+	return "", fmt.Errorf("zone %s not found", zoneName)
 }
 
-func (c *Cloudflare) listDNSRecords(zoneID string, pretty bool) (bool, error) {
-	body, err := c.get(c.endpoint + "/zones/" + zoneID + "/dns_records")
+// listDNSRecords prints the name of every record in the zone.
+func (c *Cloudflare) listDNSRecords(zoneID string, pretty bool) error {
+	records, err := c.getDNSRecords(zoneID)
 	if err != nil {
-		return false, err
-	}
-	records, err := parseResult(body)
-	if err != nil {
-		return false, err
-	}
-	if records == nil {
-		return false, nil
+		return err
 	}
 
 	table := NewTable()
@@ -112,60 +152,98 @@ func (c *Cloudflare) listDNSRecords(zoneID string, pretty bool) (bool, error) {
 		}
 	}
 	fmt.Fprintln(c.out, table.render())
-	return true, nil
+	return nil
 }
 
-// updateRecord points the record at params.Content, creating the record when
-// it does not exist yet. It reports false when the update could not be made.
-func (c *Cloudflare) updateRecord(zoneName string, params Param) (bool, error) {
-	zoneID, err := c.getZoneID(zoneName)
-	if err != nil {
-		return false, err
-	}
-	if zoneID == "" {
-		c.logger.warn(params.Name, "Update failed: zone "+zoneName+" not found")
-		return false, nil
-	}
+func (c *Cloudflare) getDNSRecords(zoneID string) ([]Record, error) {
+	return getAll[Record](c, c.endpoint+"/zones/"+zoneID+"/dns_records")
+}
 
-	records, err := c.get(c.endpoint + "/zones/" + zoneID + "/dns_records")
-	if err != nil {
-		return false, err
-	}
-	dnsID, err := c.getDNSID(records, params.Name)
-	if err != nil {
-		return false, err
+// updateRecord makes the zone hold params, given the records it has now:
+// it creates the record when there is none of that name and type, and leaves
+// an up-to-date record alone unless force is set.
+//
+// A write the API refuses is logged and reported as Failed, not as an error;
+// an error means the API could not be reached or understood.
+func (c *Cloudflare) updateRecord(zoneID string, records []Record, params Param, force bool) (Outcome, error) {
+	existing := findRecord(records, params.Name, params.Type)
+	if existing != nil && existing.matches(params) && !force {
+		return Unchanged, nil
 	}
 
 	content, err := json.Marshal(params)
 	if err != nil {
-		return false, err
+		return Failed, err
 	}
-
 	var response string
-	if dnsID == "" {
+	if existing == nil {
 		response, err = c.request(http.MethodPost, c.endpoint+"/zones/"+zoneID+"/dns_records", content)
 	} else {
-		response, err = c.request(http.MethodPut, c.endpoint+"/zones/"+zoneID+"/dns_records/"+dnsID, content)
+		response, err = c.request(http.MethodPut, c.endpoint+"/zones/"+zoneID+"/dns_records/"+existing.ID, content)
 	}
 	if err != nil {
-		return false, err
+		return Failed, err
 	}
-	c.logger.info(params.Name, response)
 
-	if strings.TrimSpace(response) == "" {
-		c.logger.warn(params.Name, "Update failed: empty response")
-		return false, nil
+	var result struct {
+		Success bool `json:"success"`
 	}
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return Failed, fmt.Errorf("unexpected response %q: %w", response, err)
+	}
+	if !result.Success {
+		c.logger.warn(params.Name, "Update failed: "+response)
+		return Failed, nil
+	}
+
+	c.logger.info(params.Name, response)
 	var indented bytes.Buffer
 	if err := json.Indent(&indented, []byte(response), "", "  "); err != nil {
-		return false, fmt.Errorf("unexpected response %q: %w", response, err)
+		return Failed, err
 	}
 	fmt.Fprintln(c.out, indented.String())
-	return true, nil
+	return Updated, nil
 }
 
-func (c *Cloudflare) getDNSID(body string, dnsName string) (string, error) {
-	return searchID(body, dnsName)
+// findRecord returns the record of the given name and type, or nil.
+// Several records may share a name: a zone often has both A and MX records.
+func findRecord(records []Record, name, recordType string) *Record {
+	for i := range records {
+		if records[i].Name == name && records[i].Type == recordType {
+			return &records[i]
+		}
+	}
+	return nil
+}
+
+// getAll fetches a list endpoint page by page and returns every item.
+func getAll[T any](c *Cloudflare, url string) ([]T, error) {
+	var all []T
+	for page := 1; ; page++ {
+		body, err := c.get(fmt.Sprintf("%s?page=%d", url, page))
+		if err != nil {
+			return nil, err
+		}
+
+		var response struct {
+			Success    bool `json:"success"`
+			Result     []T  `json:"result"`
+			ResultInfo struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+		}
+		if err := json.Unmarshal([]byte(body), &response); err != nil {
+			return nil, fmt.Errorf("unexpected response %q: %w", body, err)
+		}
+		if !response.Success {
+			return nil, fmt.Errorf("the API refused the request: %s", body)
+		}
+
+		all = append(all, response.Result...)
+		if page >= response.ResultInfo.TotalPages {
+			return all, nil
+		}
+	}
 }
 
 func (c *Cloudflare) get(url string) (string, error) {
@@ -189,36 +267,4 @@ func (c *Cloudflare) request(method, url string, body []byte) (string, error) {
 
 	responseBody, err := io.ReadAll(response.Body)
 	return string(responseBody), err
-}
-
-// entry is one item of a list response: a zone or a DNS record.
-type entry struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// parseResult extracts the "result" list of a response. The list is nil when
-// the response has no result, which is how the API reports an error.
-func parseResult(body string) ([]entry, error) {
-	var response struct {
-		Result []entry `json:"result"`
-	}
-	if err := json.Unmarshal([]byte(body), &response); err != nil {
-		return nil, fmt.Errorf("unexpected response %q: %w", body, err)
-	}
-	return response.Result, nil
-}
-
-// searchID returns the id of the entry with the given name, or "" if absent.
-func searchID(body string, name string) (string, error) {
-	entries, err := parseResult(body)
-	if err != nil {
-		return "", err
-	}
-	for _, e := range entries {
-		if e.Name == name {
-			return e.ID, nil
-		}
-	}
-	return "", nil
 }

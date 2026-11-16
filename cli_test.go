@@ -3,16 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// The help and usage-error texts below were captured from the Kotlin version.
 const wantHelp = `Usage: cloudflare [<options>]
 
 Options:
@@ -21,6 +19,7 @@ Options:
   --zone=<zone>
   --dns=<dns(,dns)*>
   --proxy
+  --force
   --list_zones
   --list_dns
   --update
@@ -40,17 +39,17 @@ type cliRun struct {
 // service that always answers 203.0.113.9.
 func runCli(t *testing.T, api *fakeAPI, args ...string) cliRun {
 	t.Helper()
-	ipService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "203.0.113.9")
-	}))
-	defer ipService.Close()
+	return runCliWithIPService(t, api, ipService(t, http.StatusOK, "203.0.113.9"), args...)
+}
 
+func runCliWithIPService(t *testing.T, api *fakeAPI, ipURL string, args ...string) cliRun {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
 	cli := &Cli{
 		stdout:   &stdout,
 		stderr:   &stderr,
 		endpoint: api.server.URL,
-		ipURL:    ipService.URL,
+		ipURL:    ipURL,
 		logPath:  filepath.Join(t.TempDir(), ".dns.log"),
 	}
 	exitCode := cli.run(args)
@@ -67,6 +66,22 @@ func (r cliRun) expect(t *testing.T, exitCode int, stdout, stderr string) {
 	}
 	if r.stderr != stderr {
 		t.Errorf("stderr: got %q, want %q", r.stderr, stderr)
+	}
+}
+
+// expectErrorLine checks for exit code 1 and a single ERROR log line, on
+// stderr and in the log file, that ends with the given text.
+func (r cliRun) expectErrorLine(t *testing.T, suffix string) {
+	t.Helper()
+	if r.exitCode != 1 {
+		t.Errorf("exit code: got %d, want 1", r.exitCode)
+	}
+	want := regexp.MustCompile(`^` + timestampPattern + ` ERROR .*` + regexp.QuoteMeta(suffix) + `\n$`)
+	if !want.MatchString(r.stderr) {
+		t.Errorf("stderr: got %q, want one ERROR line ending in %q", r.stderr, suffix)
+	}
+	if log := readFile(t, r.logPath); !strings.HasSuffix(log, r.stderr) {
+		t.Errorf("log file: got %q, want it to end with the stderr line", log)
 	}
 }
 
@@ -89,13 +104,16 @@ func (api *fakeAPI) sentRecords(t *testing.T) []Param {
 
 func newUpdateAPI(t *testing.T) *fakeAPI {
 	return newFakeAPI(t, map[string]string{
-		"GET /zones":                              zonesResponse,
-		"GET /zones/zone-1/dns_records":           dnsRecordsResponse,
-		"PUT /zones/zone-1/dns_records/rec-music": updateResponse,
-		"PUT /zones/zone-1/dns_records/rec-apex":  updateResponse,
-		"POST /zones/zone-1/dns_records":          updateResponse,
+		"GET /zones":                               zonesResponse,
+		"GET /zones/zone-1/dns_records":            dnsRecordsResponse,
+		"PUT /zones/zone-1/dns_records/rec-music":  updateResponse,
+		"PUT /zones/zone-1/dns_records/rec-apex":   updateResponse,
+		"PUT /zones/zone-1/dns_records/rec-videos": updateResponse,
+		"POST /zones/zone-1/dns_records":           updateResponse,
 	})
 }
+
+// --- options ---
 
 func TestHelpPrintsUsage(t *testing.T) {
 	for _, flag := range []string{"--help", "-h"} {
@@ -109,11 +127,12 @@ func TestHelpWinsOverOtherOptions(t *testing.T) {
 
 func TestMissingRequiredOptionsAreReportedTogether(t *testing.T) {
 	runCli(t, newFakeAPI(t, nil), "--update").expect(t, 1, "",
-		wantUsage+"Error: missing option --email\nError: missing option --key\n")
+		wantUsage+"Error: missing option --email\nError: missing option --key\n"+
+			"Error: missing option --zone\nError: missing option --dns\n")
 }
 
 func TestMissingKeyIsReported(t *testing.T) {
-	runCli(t, newFakeAPI(t, nil), "--email", "a").expect(t, 1, "",
+	runCli(t, newFakeAPI(t, nil), "--email", "a", "--list_zones").expect(t, 1, "",
 		wantUsage+"Error: missing option --key\n")
 }
 
@@ -131,34 +150,61 @@ func TestLongOptionWithSingleDashIsRejected(t *testing.T) {
 }
 
 func TestExtraArgumentIsRejected(t *testing.T) {
-	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "extra").expect(t, 1, "",
+	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--list_zones", "extra").expect(t, 1, "",
 		wantUsage+"Error: got unexpected extra argument (extra)\n")
 }
 
-func TestListDNSRequiresZone(t *testing.T) {
-	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--list_dns").expect(t, 1, "",
-		"--zone option is required\n")
+func TestEmptyValuesAreRejected(t *testing.T) {
+	cases := map[string][]string{
+		"email": {"--email", "", "--key", "b", "--list_zones"},
+		"key":   {"--email", "a", "--key", "", "--list_zones"},
+		"zone":  {"--email", "a", "--key", "b", "--list_dns", "--zone", ""},
+	}
+	for option, args := range cases {
+		api := newFakeAPI(t, nil)
+
+		runCli(t, api, args...).expect(t, 1, "",
+			wantUsage+"Error: option --"+option+" must not be empty\n")
+
+		if len(api.requests) != 0 {
+			t.Errorf("%s: got requests %v, want none", option, api.calls())
+		}
+	}
 }
 
-func TestUpdateRequiresDNS(t *testing.T) {
-	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--update", "--zone", "z").expect(t, 1, "",
-		"--dns option is required\n")
-}
-
-func TestUpdateRequiresZone(t *testing.T) {
-	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--update", "--dns", "d").expect(t, 1, "",
-		"--zone option is required\n")
-}
-
-func TestDoesNothingWithoutModeOption(t *testing.T) {
+func TestModeOptionIsRequired(t *testing.T) {
 	api := newFakeAPI(t, nil)
 
-	runCli(t, api, "--email", "a", "--key", "b").expect(t, 0, "", "")
+	runCli(t, api, "--email", "a", "--key", "b").expect(t, 1, "",
+		wantUsage+"Error: one of --list_zones, --list_dns, --update is required\n")
 
 	if len(api.requests) != 0 {
 		t.Errorf("got requests %v, want none", api.calls())
 	}
 }
+
+func TestOnlyOneModeOptionIsAllowed(t *testing.T) {
+	api := newFakeAPI(t, nil)
+
+	runCli(t, api, "--email", "a", "--key", "b", "--update", "--list_zones").expect(t, 1, "",
+		wantUsage+"Error: only one of --list_zones, --list_dns, --update may be given\n")
+
+	if len(api.requests) != 0 {
+		t.Errorf("got requests %v, want none", api.calls())
+	}
+}
+
+func TestListDNSRequiresZone(t *testing.T) {
+	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--list_dns").expect(t, 1, "",
+		wantUsage+"Error: missing option --zone\n")
+}
+
+func TestUpdateRequiresDNSAndZone(t *testing.T) {
+	runCli(t, newFakeAPI(t, nil), "--email", "a", "--key", "b", "--update").expect(t, 1, "",
+		wantUsage+"Error: missing option --zone\nError: missing option --dns\n")
+}
+
+// --- list modes ---
 
 func TestListZones(t *testing.T) {
 	api := newFakeAPI(t, map[string]string{"GET /zones": zonesResponse})
@@ -186,27 +232,50 @@ func TestListDNS(t *testing.T) {
 	run := runCli(t, api, "--email", "a", "--key", "b", "--list_dns", "--zone", "example.com")
 
 	run.expect(t, 0, ""+
+		"       example.com\n"+
 		" music.example.com\n"+
 		"       example.com\n"+
 		"videos.example.com\n"+
 		"\n", "")
 }
 
-func TestListZonesWinsOverUpdate(t *testing.T) {
-	api := newFakeAPI(t, map[string]string{"GET /zones": zonesResponse})
+func TestListZonesExitsOneWhenAPIRefuses(t *testing.T) {
+	api := newFakeAPI(t, map[string]string{"GET /zones": authErrorResponse})
 
-	runCli(t, api, "--email", "a", "--key", "b", "--update", "--list_zones")
+	run := runCli(t, api, "--email", "a", "--key", "b", "--list_zones")
 
-	if !reflect.DeepEqual(api.calls(), []string{"GET /zones"}) {
-		t.Errorf("calls: got %v", api.calls())
+	run.expectErrorLine(t, authErrorResponse)
+	if run.stdout != "" {
+		t.Errorf("stdout: got %q, want nothing", run.stdout)
 	}
 }
 
-func TestUpdatePointsEveryNameAtPublicIP(t *testing.T) {
+func TestListDNSFailsWhenZoneIsUnknown(t *testing.T) {
+	api := newFakeAPI(t, map[string]string{"GET /zones": zonesResponse})
+
+	run := runCli(t, api, "--email", "a", "--key", "b", "--list_dns", "--zone", "unknown.example")
+
+	run.expectErrorLine(t, "unknown.example - zone unknown.example not found")
+}
+
+func TestFailsWhenAPIIsUnreachable(t *testing.T) {
+	api := newFakeAPI(t, nil)
+	api.server.Close()
+
+	run := runCli(t, api, "--email", "a", "--key", "b", "--list_zones")
+
+	if run.exitCode != 1 || !strings.Contains(run.stderr, " ERROR cloudflare - ") {
+		t.Errorf("got exit=%d stderr=%q", run.exitCode, run.stderr)
+	}
+}
+
+// --- update mode ---
+
+func TestUpdatePointsStaleNamesAtPublicIP(t *testing.T) {
 	api := newUpdateAPI(t)
 
 	// Same option style as the crontab entry; the empty name is the zone itself.
-	run := runCli(t, api, "--update", "--email=a", "--key=b", "--zone=example.com", "--dns=music,,new")
+	run := runCli(t, api, "--update", "--email=a", "--key=b", "--zone=example.com", "--dns=music,,videos,new")
 
 	if run.exitCode != 0 || run.stderr != "" {
 		t.Fatalf("got exit=%d stderr=%q", run.exitCode, run.stderr)
@@ -217,25 +286,71 @@ func TestUpdatePointsEveryNameAtPublicIP(t *testing.T) {
 		{"A", "new.example.com", "203.0.113.9", 120, false},
 	}
 	if got := api.sentRecords(t); !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+		t.Errorf("got %v, want %v (videos is already up to date)", got, want)
 	}
 }
 
-func TestUpdateLooksUpZoneAndRecordsForEachName(t *testing.T) {
+func TestUpdateLooksUpZoneAndRecordsOnce(t *testing.T) {
 	api := newUpdateAPI(t)
 
-	runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,new")
+	runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,,new")
 
 	want := []string{
 		"GET /zones",
 		"GET /zones/zone-1/dns_records",
 		"PUT /zones/zone-1/dns_records/rec-music",
-		"GET /zones",
-		"GET /zones/zone-1/dns_records",
+		"PUT /zones/zone-1/dns_records/rec-apex",
 		"POST /zones/zone-1/dns_records",
 	}
 	if !reflect.DeepEqual(api.calls(), want) {
 		t.Errorf("calls: got %v, want %v", api.calls(), want)
+	}
+}
+
+func TestUpdateEndsWithSummaryLine(t *testing.T) {
+	api := newUpdateAPI(t)
+
+	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,,videos,new")
+
+	lines := strings.Split(strings.TrimSuffix(readFile(t, run.logPath), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("got %d log lines, want one per updated record and a summary: %q", len(lines), lines)
+	}
+	if !strings.HasSuffix(lines[0], " INFO  music.example.com - "+updateResponse) {
+		t.Errorf("first line: got %q", lines[0])
+	}
+	if !strings.HasSuffix(lines[3], " INFO  example.com - 4 names at 203.0.113.9: 3 updated, 1 unchanged, 0 failed") {
+		t.Errorf("summary: got %q", lines[3])
+	}
+}
+
+func TestUpdateWritesOnlySummaryWhenNothingChanged(t *testing.T) {
+	api := newUpdateAPI(t)
+
+	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "videos")
+
+	if run.exitCode != 0 || run.stderr != "" {
+		t.Fatalf("got exit=%d stderr=%q", run.exitCode, run.stderr)
+	}
+	want := regexp.MustCompile(`^` + timestampPattern + ` INFO  example\.com - 1 names at 203\.0\.113\.9: 0 updated, 1 unchanged, 0 failed\n$`)
+	if !want.MatchString(run.stdout) {
+		t.Errorf("stdout: got %q", run.stdout)
+	}
+	if got := api.sentRecords(t); len(got) != 0 {
+		t.Errorf("got writes %v, want none", got)
+	}
+}
+
+func TestUpdateWithForceWritesUpToDateRecords(t *testing.T) {
+	api := newUpdateAPI(t)
+
+	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--force", "--zone", "example.com", "--dns", "videos")
+
+	if got := api.sentRecords(t); len(got) != 1 || got[0].Name != "videos.example.com" {
+		t.Errorf("got writes %v, want videos", got)
+	}
+	if !strings.Contains(run.stdout, "1 names at 203.0.113.9: 1 updated, 0 unchanged, 0 failed") {
+		t.Errorf("stdout: got %q", run.stdout)
 	}
 }
 
@@ -268,43 +383,40 @@ func TestUpdateWithProxyProxiesAllButZoneAndHub(t *testing.T) {
 	}
 }
 
-func TestUpdateWritesOneLogLinePerRecord(t *testing.T) {
+func TestUpdateFailsWhenAPIRefusesARecordButStillUpdatesTheRest(t *testing.T) {
 	api := newUpdateAPI(t)
+	api.responses["PUT /zones/zone-1/dns_records/rec-music"] = refusedResponse
 
-	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,")
+	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,videos,new")
 
-	lines := strings.Split(strings.TrimSuffix(readFile(t, run.logPath), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d log lines, want 2: %q", len(lines), lines)
+	run.expectErrorLine(t, "example.com - 3 names at 203.0.113.9: 1 updated, 1 unchanged, 1 failed")
+	if !strings.Contains(run.stdout, " WARN  music.example.com - Update failed: "+refusedResponse) {
+		t.Errorf("stdout: got %q, want a warning for music", run.stdout)
 	}
-	if !strings.HasSuffix(lines[0], " INFO  music.example.com - "+updateResponse) {
-		t.Errorf("first line: got %q", lines[0])
-	}
-	if !strings.HasSuffix(lines[1], " INFO  example.com - "+updateResponse) {
-		t.Errorf("second line: got %q", lines[1])
+	if got := api.calls()[len(api.calls())-1]; got != "POST /zones/zone-1/dns_records" {
+		t.Errorf("last call: got %q, want the record after the failed one to be written", got)
 	}
 }
 
-func TestUpdateExitsZeroEvenWhenUpdateFails(t *testing.T) {
-	api := newFakeAPI(t, map[string]string{"GET /zones": authErrorResponse})
+func TestUpdateFailsBeforeTouchingAnythingWhenIPLookupFails(t *testing.T) {
+	api := newUpdateAPI(t)
+	badIPService := ipService(t, http.StatusOK, "<html>Too Many Requests</html>")
 
-	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music,videos")
+	run := runCliWithIPService(t, api, badIPService,
+		"--email", "a", "--key", "b", "--update", "--zone", "example.com", "--dns", "music")
 
-	if run.exitCode != 0 || run.stderr != "" {
+	if run.exitCode != 1 || !strings.Contains(run.stderr, " ERROR example.com - ") {
 		t.Errorf("got exit=%d stderr=%q", run.exitCode, run.stderr)
 	}
-	if got := strings.Count(run.stdout, "Update failed: zone example.com not found"); got != 2 {
-		t.Errorf("got %d warnings, want one per name: %q", got, run.stdout)
+	if len(api.requests) != 0 {
+		t.Errorf("got requests %v, want none", api.calls())
 	}
 }
 
-func TestExitsOneWhenAPIIsUnreachable(t *testing.T) {
-	api := newFakeAPI(t, nil)
-	api.server.Close()
+func TestUpdateFailsWhenZoneIsUnknown(t *testing.T) {
+	api := newFakeAPI(t, map[string]string{"GET /zones": zonesResponse})
 
-	run := runCli(t, api, "--email", "a", "--key", "b", "--list_zones")
+	run := runCli(t, api, "--email", "a", "--key", "b", "--update", "--zone", "unknown.example", "--dns", "music")
 
-	if run.exitCode != 1 || !strings.HasPrefix(run.stderr, "Error: ") {
-		t.Errorf("got exit=%d stderr=%q", run.exitCode, run.stderr)
-	}
+	run.expectErrorLine(t, "unknown.example - zone unknown.example not found")
 }

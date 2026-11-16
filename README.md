@@ -24,13 +24,15 @@ Options:
   --zone=<zone>
   --dns=<dns(,dns)*>
   --proxy
+  --force
   --list_zones
   --list_dns
   --update
   -h, --help          Show this message and exit
 ```
 
-`--email` and `--key` (the Cloudflare Global API Key) are always required.
+`--email` and `--key` (the Cloudflare Global API Key) are always required,
+together with exactly one of `--list_zones`, `--list_dns` and `--update`.
 
 **Update (or insert) DNS records**
 
@@ -39,11 +41,15 @@ cloudflare --email <email> --key <key> --update --zone example.domain --dns 'mus
 ```
 
 This points `music.example.domain`, `example.domain`, `videos.example.domain`
-and `photos.example.domain` at the current public IP as `A` records with a
-TTL of 120 seconds. An empty name stands for the zone itself.
+and `photos.example.domain` at the current public IP as `A` records. An empty
+name stands for the zone itself.
 
-With `--proxy`, the records are served through Cloudflare's proxy, except for
-the zone itself and the `hub` subdomain.
+- A record that already holds the right address is left alone. `--force`
+  writes every record regardless.
+- A missing record is created.
+- With `--proxy`, the records are served through Cloudflare's proxy, except
+  for the zone itself and the names listed in `config.go`.
+- The TTL is set in `config.go` (120 seconds).
 
 **List zones**
 
@@ -70,19 +76,27 @@ cloudflare --email <email> --key <key> --list_dns --zone example.domain
 
 ## Log
 
-Every update writes one line per record to stdout and appends the same line
-to `~/.dns.log`:
+`--update` writes log lines to the terminal and appends the same lines to
+`~/.dns.log`: one line per record it wrote, then one summary line.
 
 ```
 2026-11-16 20:00:37.261 INFO  music.example.domain - {"result":{...},"success":true,...}
-2026-11-16 20:00:38.102 WARN  videos.example.domain - Update failed: zone example.domain not found
+2026-11-16 20:00:37.305 INFO  example.domain - 4 names at 203.0.113.9: 1 updated, 3 unchanged, 0 failed
 ```
 
-The log file is never rotated.
+When something goes wrong:
+
+```
+2026-11-16 20:00:37.261 WARN  music.example.domain - Update failed: {"success":false,"errors":[...]}
+2026-11-16 20:00:37.305 ERROR example.domain - 4 names at 203.0.113.9: 0 updated, 3 unchanged, 1 failed
+```
+
+`INFO` and `WARN` lines go to stdout, `ERROR` lines to stderr. The log file is
+never rotated.
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Done. A record that could not be updated is logged as `WARN` and does not change the exit code. |
-| 1 | Invalid options, or the Cloudflare API or the IP lookup service could not be reached. |
+| 0 | Everything asked for was done. |
+| 1 | Invalid options, the public IP could not be determined, the Cloudflare API could not be reached or refused a request, or at least one record could not be updated. |
